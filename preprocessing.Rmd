@@ -1,0 +1,159 @@
+---
+title: "preprocessing"
+author: "Brenna Kelly"
+date: "2023-10-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(purrr)
+library(dplyr)
+library(moments)
+library(ggplot2)
+library(tableone)
+library(gridExtra)
+
+```
+
+
+### Data Exploration and Preprocessing
+
+# Summarizing variables, generating Table 1
+
+```{r}
+
+growth <- read.csv("utah_fetal_growth.csv")
+names(growth) <- tolower(names(growth))
+
+summary(growth)
+
+# issues identified:
+table(growth$race, growth$dhispanic) # since "other" is also unknown, "missing" will be imputed as "other"
+
+growth <- growth |>
+  mutate(bpreterm = ifelse(bpreterm == 1, "preterm", "not preterm")) |>
+  mutate(t1_strata = case_when(dfemale == 1 & 
+                                 gestational_age >= median(gestational_age) ~ "female, upper",
+                               dfemale == 1 & 
+                                 gestational_age < median(gestational_age) ~ "female, lower",
+                               dfemale == 0 & 
+                                 gestational_age >= median(gestational_age) ~ "male, upper",
+                               dfemale == 0 & 
+                                 gestational_age < median(gestational_age) ~ "male, lower")) |>
+  mutate(race_eth = ifelse(dhispanic == "1", "Hispanic", race)) |>
+  mutate(race_eth = ifelse(race_eth == "Missing", "Other", race_eth))
+
+names(growth)
+
+tab2 <- CreateTableOne(vars = c("birth_weight", "parity", "bmomage", 
+             "mom_height_inches", "mom_weight_previous", "race_eth"),
+             data = growth, strata = "t1_strata")
+
+print(tab2, showAllLevels = TRUE)
+
+```
+
+# Skewness tests and remedies
+
+```{r, warning = FALSE, message = FALSE}
+
+hist_vars <- c("bmomage",
+               "bbthyear",
+               "gestational_age",
+               "parity",
+               "mom_height_inches",
+               "mom_weight_previous")
+
+plot_fx <- function(i){
+  ggplot(data = growth, aes(x = growth[, which(names(growth) == i)])) +
+    geom_histogram(fill = "plum4") +
+    theme_minimal() +
+    labs(x = i, y = "Freq")
+}
+
+plots <- map(hist_vars, plot_fx)
+
+grid.arrange(plots[[1]], plots[[2]], 
+             plots[[3]], plots[[4]], 
+             plots[[5]], plots[[6]])
+
+
+skew_fx <- function(i){
+  data.frame(cbind(i,
+        skewness(growth[which(!is.na(growth[, i])), i])))
+        #skewness(log(growth[which(!is.na(growth[, i])), i])))
+}
+
+skew_df <- do.call(rbind, lapply(hist_vars, FUN = skew_fx))
+names(skew_df) <- c("variable", "skewness")
+skew_df$skewness <- as.numeric(skew_df$skewness)
+skew_df$interpretation <- case_when(abs(skew_df$skewness) < 0.5 ~ "approximately symmetric",
+                                    abs(skew_df$skewness) >= 0.5 & abs(skew_df$skewness) < 1 ~ "moderately skewed",
+                                    abs(skew_df$skewness) >= 1 ~ "highly skewed")
+
+# gestational age: would require a drastic and uninterpretable linear transformation
+skewness(growth[, "gestational_age"]^(4))
+skewness(growth[, "gestational_age"]^(5))
+
+# parity: follows poisson distribution; linear transformation inappropriate
+plots[[4]]
+growth$parity_cat <- as.factor(case_when(growth$parity == 0 ~ "0",
+                                         growth$parity == 1 ~ "1",
+                                         growth$parity == 2 ~ "2",
+                                         growth$parity >= 3 ~ "3+",
+                                         is.na(growth$parity) ~ as.character(median(growth$parity, 
+                                                                       na.rm = TRUE)))) #median imputation for now
+
+# mom weight previous: an adjusting variable only; interpretation will not be a concern
+skewness(log(growth[, "mom_weight_previous"]), na.rm = TRUE)
+skewness(1 / (growth[, "mom_weight_previous"])^(1/2), na.rm = TRUE) # approxiately symmetric
+growth$mom_wt_tx <- 1 / (growth$mom_weight_previous)^(1/2)
+
+# race/ethnicity: creating an extra, simple variable
+table(growth$race_eth)
+prop.table(table(growth$race_eth))*100
+
+growth$race_eth_simple <- ifelse(growth$race_eth == "White", "White", "Non-White or Hispanic")
+table(growth$race_eth_simple)
+prop.table(table(growth$race_eth_simple))
+
+```
+
+# Transformations for interpretability
+Centering, scaling, and setting referent categories.
+
+```{r}
+
+growth <- growth |>
+  mutate(gestational_age_c = gestational_age - mean(gestational_age, na.rm = TRUE)) |>
+  mutate(mom_ht_feet = mom_height_inches*(1/12)) |>
+  mutate(mom_ht_feet = mom_ht_feet - mean(mom_ht_feet, na.rm = TRUE)) |>
+  mutate(bmomage_c = bmomage - mean(bmomage, na.rm = TRUE)) |>
+  mutate(bmi = (mom_weight_previous / (mom_height_inches^2)) * 703) |>
+  mutate(age_cat = case_when(bmomage < 24.5 ~ "18-24",
+                             bmomage >= 24.5 & bmomage < 29.5 ~ "25-29",
+                             bmomage >= 29.5 & bmomage < 34.5 ~ "30-34",
+                             bmomage >= 34.5 ~ "35+")) |>
+  mutate(age_cat = relevel(as.factor(age_cat), ref = "18-24")) |> # ordinal
+  mutate(parity_cat = relevel(parity_cat, ref = "0")) |>
+  mutate(sex = relevel(as.factor(ifelse(dfemale == 1, "female", "male")), ref = "male")) |>
+  mutate(race_eth = relevel(as.factor(race_eth), ref = "White")) |>
+  mutate(race_eth_simple = relevel(as.factor(race_eth_simple), ref = "White"))
+
+# dataset for regression
+growth_r <- growth |>
+  select(-c(race, id, mom_height_inches, dblack, 
+            draceother, dasian, dhispanic, dfemale,
+            t1_strata))
+
+```
+
+
+
+
+
+

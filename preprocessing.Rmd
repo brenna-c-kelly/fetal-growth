@@ -113,6 +113,18 @@ skewness(log(growth[, "mom_weight_previous"]), na.rm = TRUE)
 skewness(1 / (growth[, "mom_weight_previous"])^(1/2), na.rm = TRUE) # approxiately symmetric
 growth$mom_wt_tx <- 1 / (growth$mom_weight_previous)^(1/2)
 
+growth_r[which(growth_r$mom_weight_previous_c < 1 &
+                 growth_r$mom_weight_previous_c > -1), ]
+summary(growth_r$mom_weight_previous_c)
+
+mean(growth$mom_wt_tx, na.rm = TRUE)
+
+1/ (0.08333862^2)
+
+mean(growth$mom_weight_previous, na.rm = TRUE)
+
+plot(growth$mom_weight_previous, growth$birth_weight)
+
 # race/ethnicity: creating an extra, simple variable
 table(growth$race_eth)
 prop.table(table(growth$race_eth))*100
@@ -140,6 +152,7 @@ growth <- growth |>
                              bmomage >= 34.5 ~ "35+")) |>
   mutate(age_cat = relevel(as.factor(age_cat), ref = "18-24")) |> # ordinal
   mutate(parity_cat = relevel(parity_cat, ref = "0")) |>
+  mutate(parity_f = relevel(as.factor(parity_), ref = "0")) |>
   mutate(sex = relevel(as.factor(ifelse(dfemale == 1, "female", "male")), ref = "male")) |>
   mutate(race_eth = relevel(as.factor(race_eth), ref = "White")) |>
   mutate(race_eth_simple = relevel(as.factor(race_eth_simple), ref = "White"))

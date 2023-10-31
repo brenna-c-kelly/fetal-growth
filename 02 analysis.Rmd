@@ -1,0 +1,619 @@
+---
+title: "02 analysis"
+author: "Brenna Kelly"
+date: "2023-10-22"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(ggplot2)
+library(regclass)
+library(ggridges)
+library(quantreg)
+library(quantregGrowth)
+
+```
+
+
+### Analysis for Objectives 1a, 1b
+
+Objective 1: Identify associations between parity and mean birth weight, independent of maternal characteristics.
+a.	Assess relationship between birth weight and parity (adjusting for maternal characteristics).
+    - Do not use sex or maternal age; these are not extraneous characteristics and will be tested in Objective 2
+
+# Analysis 1a
+Model building
+
+```{r}
+names(growth_r)
+
+# parity
+extractAIC(lm(birth_weight ~ parity_f, data = growth_r))
+extractAIC(lm(birth_weight ~ parity_cat, data = growth_r))
+# a categorical variable may be more interpretable, but the factor-valued variable is a better fit
+
+# race
+extractAIC(lm(birth_weight ~ parity_f + race_eth, data = growth_r))
+extractAIC(lm(birth_weight ~ parity_f + race_eth_simple, data = growth_r))
+# simple categories do not improve fit; use specific racial/ethnic groups
+
+# ht, wt
+extractAIC(lm(birth_weight ~ parity_f + mom_wt_c_sc + mom_ht_c_sc, data = growth_r))
+VIF(lm(birth_weight ~ parity_f + mom_wt_c_sc + mom_ht_c_sc, data = growth_r)) 
+# multicollienarity is very low
+extractAIC(lm(birth_weight ~ parity_f + bmi, data = growth_r))
+# bmi is not required for multicollinearity and does not improve fit compared to ht/wt
+
+# race, ht, wt, previous preterm birth
+lm_1a <- lm(birth_weight ~ parity_f + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r)
+extractAIC(lm_1a) # best fit
+VIF(lm_1a) # no multicollinearity
+summary(lm_1a)
+
+plot(lm_1a, which = 2) # the QQ plot has light tails; suggests left skew
+plot(lm_1a$fitted.values, lm_1a$residuals,
+     ylab = "Residuals", xlab = "Birth weight, fitted (g)",
+     col = rgb(red = 0, green = 0, blue = 0, alpha = 0.1))
+abline(0, 0, col = "red", lty = 2)
+# some structure, slight skew perhaps
+
+## selected model:
+# if we use the categorical variable, the residuals are less clustered and more centered
+lm_1a <- lm(birth_weight ~ parity_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r)
+res_lm_1a <- lm_1a$coefficients
+
+plot(lm_1a$fitted.values, lm_1a$residuals,
+     ylab = "Residuals", xlab = "Birth weight, fitted (g)",
+     col = rgb(red = 0, green = 0, blue = 0, alpha = 0.1))
+abline(0, 0, col = "red", lty = 2)
+
+# not normal (qq plot)
+plot(lm_1a, which = 2) # light tailed qq, especially in the lower tail
+# there is more data located in the lower quantiles (extremes) of the distribution than the center
+```
+
+Testing some assumptions
+
+```{r}
+# influential observation (won't be a concern)
+plot(lm_1a, which = 4) # plot 4
+growth_r[names(cooks.distance(lm_1a)[which.max(cooks.distance(lm_1a))][1]), ] # most influential
+cooks.distance(lm_1a)[which.max(cooks.distance(lm_1a))][1]
+# value is only 0.008; this observation probably doesn't have too much influence
+
+## Potential nonlinearity
+# the relationship with birth weight / parity in the data
+ggplot(data = growth_r, aes(x = birth_weight, y = parity_f)) +
+  geom_density_ridges()
+
+# let's confirm our choice of variable type (all factors, truncated factors)
+# the fitted relationship with bw / parity in the model (with factor)
+#     some strange behavior arises for mothers with more than 9 kids; few observations
+lm_1a_1 <- lm(birth_weight ~ parity_f + race_eth + mom_wt_c_sc + mom_ht_c_sc, data = growth_r)
+ggplot(data = lm_1a, aes(x = lm_1a_1$fitted.values, y = lm_1a_1$model$parity_f, fill = stat(x))) +
+  geom_density_ridges_gradient() +
+  scale_fill_viridis_c(name = "fitted.values", option = "C") +
+  theme_minimal() +
+  labs(title = "Parity factors (0-14)", xlab = "Birth weight, fitted (g)", ylab = "Parity")
+# when we use categorical, the fitted values look more reasonable:
+lm_1a_2 <- lm(birth_weight ~ parity_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc, data = growth_r)
+ggplot(data = lm_1a, aes(x = lm_1a_2$fitted.values, y = lm_1a_2$model$parity_cat, fill = stat(x))) +
+  geom_density_ridges_gradient(scale = 0.75) +
+  scale_fill_viridis_c(name = "fitted.values", option = "C") +
+  theme_minimal() +
+  labs(title = "Parity factors, truncated", xlab = "Birth weight, fitted (g)", ylab = "Parity")
+# we'll use the categorical variable
+
+# residual diagnostics
+mean(lm_1a$residuals) # about 0
+
+growth_r$residuals <- lm_1a$residuals
+
+# residuals look heteroskedastic
+ggplot(data = growth_r, aes(y = residuals, x = parity)) + 
+  geom_point(col = 'blue') + 
+  geom_abline(slope = 0)
+
+# moderate skewness in the residuals
+hist(growth_r$residuals)
+skewness(growth_r$residuals)
+
+# formal test of heteroskedasticity
+bptest(birth_weight ~ parity_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r)
+# we reject the null, there is heteroskedasticity in this model
+
+summary(lm_1a)
+confint(lm_1a)
+
+```
+
+*Interpretation of Model 1A:* In nulliparous women who are non-Hispanic White, of average height and weight, the predicted birth weight is 3313.9 grams [95% CI 3305.3, 3322.5, p < 0.001], or about 7 lb 5 oz. Parity is associated with statistically significant increases in birth weight; one previous birth is associated with an 41-gram increase [95% CI 28.9, 54.4, p < 0.001], two previous births is associated with a 60-gram increase [95% CI 47.3, 73.6, p < 0.001], and three or more previous births is associated with a 111-gram increase [95% CI 97.9, 124.5, p < 0.001].
+
+# Analysis 1b
+Objective 1: Identify associations between parity and mean birth weight, independent of maternal characteristics.
+b.	Assess relationship between birth weight and parity by gestational age (adjusting for maternal characteristics).
+
+```{r}
+
+extractAIC(lm(birth_weight ~ parity_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r))
+extractAIC(lm(birth_weight ~ gestational_age_c + parity_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r)) # gestational age substantially improves fit
+extractAIC(lm(birth_weight ~ gestational_age_c*parity_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r))
+# parity by gestational age
+
+summary(lm(birth_weight ~ gestational_age_c*parity_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r))
+# when interacting with gestational age, the effect of parity is amplified; additionally, the independent effects of parity increase
+
+
+lm_1b <- lm(birth_weight ~ gestational_age_c*parity_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r)
+summary(lm_1b)
+
+ggplot(data = growth_r, aes(y = birth_weight, x = gestational_age_c)) +
+  geom_point(alpha = 0.25) +
+  theme_minimal() +
+  geom_abline(slope = lm_1b$coefficients[["gestational_age_c"]], 
+              intercept = lm_1b$coefficients[["(Intercept)"]]) +
+  labs(y = "Birth weight (g)", x = "Gestational age")
+# overpredicts early gestational age; better fits the majority of data, still over predicting; heteroskedasticity can be seen
+bptest(birth_weight ~ parity + race_eth + gestational_age_c + mom_wt_tx + mom_ht_feet, data = growth_r)
+# yep, there's heteroskedasticity
+
+ggplot(data = growth_r, aes(y = birth_weight, x = parity)) +
+  geom_point(alpha = 0.25) +
+  theme_minimal() +
+  geom_abline(slope = lm_1a$coefficients[["parity"]], 
+              intercept = lm_1a$coefficients[["(Intercept)"]], color = "red") +
+  geom_abline(slope = lm_1b$coefficients[["parity"]], 
+              intercept = lm_1b$coefficients[["(Intercept)"]], color = "blue")
+  labs(y = "Birth weight (g)", x = "Gestational age")
+# slightly improved fit for small parity values
+
+names(growth_r)
+
+# not normal (qq plot)
+plot(lm_1b, which = 2) # lower light tail improved; upper light tail may be worse
+
+# multicollinearity
+VIF(lm_1b) # low
+
+summary(lm_1b)
+confint(lm_1b)
+
+```
+
+*Interpretation of Model 1B:* In nulliparous women who are non-Hispanic White, of average height and weight, whose infants were born at an average gestational age, the predicted birth weight is 3268.8 [95% CI 3261.6, 3276.0, p < 0.001], or about 7 lbs 3 oz. When accounting for gestational age, our predicted mean (intercept) decreases slightly **Model 1A**, but the effects of parity are larger in **Model 1B**. Gestational age is also an effect modifier for parity, amplifying the effects of having one, two, or three previous live births. When gestational age increases by one week from the mean, birth weight is expected to increase by 168.9 grams [95% CI 164.9, 173.0, p < 0.001]. Predicted birth weight increases by 89.6 grams with a parity of one [95% CI 79.8, 99.4, p < 0.001 ], 116.6 grams for two [95% CI 105.7, 127.5, p < 0.001], and 158.2 grams for three of more [95% CI 147.1, 169.2, p < 0.001]. When gestational age increase by one week for a parity of one, the interaction was associated with a 10-gram increase [95% CI 3.5, 16.3, p < 0.01]. A similar interaction for a parity of two was associated with a 17-gram increase [95% CI 9.5, 24.0, p < 0.001], and for a parity of three of more, a 16-gram increase [95% CI 9.3, 23.6, p < 0.001]. This amplifying effect is statistically significant, but the effects are fairly small, and the confidence intervals for the interactions overlap, suggesting that there may not be significant difference between the groups. The figure below visualizes the effect of the interaction.
+
+# Interaction figure, parity and gestational age
+
+```{r}
+coefs <- data.frame(lm_1b$coefficients)
+
+## Intercept
+b0 <- coefs[which(rownames(coefs) == "(Intercept)"), 1]
+
+## parity coefficients and prediction values (x-axis)
+b_parity_1 <- coefs[which(rownames(coefs) == "parity_cat1"), 1]
+xp1 <- rep(c(0, 1), length = 100)
+b_parity_2 <- coefs[which(rownames(coefs) == "parity_cat2"), 1]
+xp2 <- rep(c(0, 1), length = 100)
+b_parity_3 <- coefs[which(rownames(coefs) == "parity_cat3+"), 1]
+x1 <- rep(c("0", "1", "2", "3+"), length = 100) ## range
+
+## mom age and prediction values (colors)
+b_gest <- coefs[which(rownames(coefs) == "gestational_age_c"), 1]
+summary(growth$parity_cat)
+x2 <- seq(-14, 4, length = 40000) ## range
+
+coefs$var <- rownames(coefs)
+
+## interaction coefficient 1
+b_inx1 <- coefs[which(coefs$var == "gestational_age_c:parity_cat1"), "lm_1b.coefficients"]
+## interaction coefficient 2
+b_inx2 <- coefs[which(coefs$var == "gestational_age_c:parity_cat2"), "lm_1b.coefficients"]
+## interaction coefficient 3
+b_inx3 <- coefs[which(coefs$var == "gestational_age_c:parity_cat3+"), "lm_1b.coefficients"]
+
+library(cobalt)
+split <- splitfactor(
+  growth_r,
+  "parity_cat",
+  #drop.level = NULL,
+  drop.first = TRUE,
+  #drop.singleton = FALSE,
+  drop.na = TRUE,
+  sep = "_",
+  replace = TRUE,
+  split.with = NULL,
+  check = TRUE
+)
+
+myx <- data.frame(split$parity_cat_1, split$parity_cat_2, split$`parity_cat_3+`, x2)
+names(myx) <- c("par1", "par2", "par3", "gest")
+
+myx$test <- b0 + b_parity_1 * myx$par1 + b_gest * myx$gest + 
+  b_parity_2 * myx$par2 + b_parity_3 * myx$par3 + 
+  b_inx1 * (myx$par1 * myx$gest) +
+  b_inx2 * (myx$par2 * myx$gest) +
+  b_inx3 * (myx$par3 * myx$gest)
+
+myx$parity <- case_when(myx$par1 == 1 ~ "1",
+                        myx$par2 == 1 ~ "2",
+                        myx$par3 == 1 ~ "3+",
+                        myx$par1 == 0 & myx$par2 == 0 & myx$par3 == 0 ~ "0")
+
+summary(myx$test)
+myx$par <- as.factor(myx$par)
+table(myx$parity)
+
+ggline(myx, x = "gest", y = "test", 
+                        col = "parity", numeric.x.axis = TRUE, 
+                        size = 1.5, plot_type = 'l',
+                        xlab = "Gestational Age (centered)",
+                        ylab = "Birth Weight", alpha = 0.5) +
+  scale_colour_manual(values = brewer.pal(4, "Spectral"),) +
+  labs(color = "Parity") +
+  theme(legend.position = "right")
+
+```
+
+
+### Analysis for Objective 2
+2.	Determine whether the relationships above differ depending on infant sex or maternal age.
+
+In addition to including the independent effects, it's *possible* for us to test many interactions between effect modifiers (sex, maternal age) and predictor variables (gestational age, parity). However, we want to avoid data dredging and creating an overly complex model. Therefore, we'll work logically to decide which variables are more likely to be effect modifiers.
+- Older mothers are more likely to have high parity than young mothers. By including an interaction between these variables, we could potentially parse out this relationship better.
+- We know that male babies tend to be larger than female babies. It's possible, however, that this effect is stronger in later stages of fetal development — perhaps, by interacting gestational age with infant sex, we could test for this.
+
+One other comparison we will do is between maternal age as a continuous variable and as a categorical variable. Maternal age has a slight right skew (probably because the age cutoff for inclusion was 18, and there is no upper limit), but not enough to be concerned about. Discretizing age into groups, however, will allow for a potential nonlinear (basically threshold) relationship. We will compare the AIC scores with these two types of variables and select the best-fitting model.
+
+```{r}
+
+## maternal age interaction
+# continuous maternal age, centered
+extractAIC(lm(birth_weight ~ gestational_age_c + parity_cat*bmomage_c + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r))
+# discretized
+extractAIC(lm(birth_weight ~ gestational_age_c + parity_cat*age_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r))
+# categorical is a better fit
+
+## infant sex interaction
+extractAIC(lm(birth_weight ~ gestational_age_c*sex + parity_cat*age_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r))
+# there's a marked improvement
+
+# selected model
+lm_2 <- lm(birth_weight ~ gestational_age_c*sex + parity_cat*age_cat  + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r)
+
+# we can't test a VIF with interactions, so we'll see if there's multicollinearity between the independent effects
+VIF(lm(birth_weight ~ gestational_age_c + sex + parity_cat + age_cat + race_eth + mom_wt_c_sc + mom_ht_c_sc + bpreterm, data = growth_r))
+# no multicollinearity
+
+summary(lm_2)
+confint(lm_2)
+
+```
+
+**Interpretation:** In nulliparous women of average maternal age who are non-Hispanic White, of average height and weight, whose infants were assigned male and born at an average gestational age, the predicted birth weight is 3336.1 [95% CI 3325.8, 3346.4, p < 0.001], or about 7 lbs 6 oz. Female infants were predicted to weight 128.8 grams fewer than males [95% CI -136.2, -121.4, p < 0.001]. When interacting with maternal age, the parity effects were markedly reduced from what was seen in **Models 1A** and **1B** — having parity of three or more was associated with a 9-gram decrease, but this effect was not statistically significant (p > 0.10). Of note, because there is an interaction between maternal age and parity and the referent group for parity is zero, the effect of maternal age is equivalent to the effect of age *at first live birth*. Compared to nulliparous women aged 18-24, nulliparous women aged 25-29 had no statistically significant difference in birth weight (p > 0.10). Maternal age of 30-34 was associated with a 30-gram decrease in birth weight [95% CI -52.0, -9.4, p < 0.01], and age of 35 or greater was associated with a 50-gram decrease in birth weight [95% CI -84.9, -15.4, p < 0.01].
+
+The effects of parity when interacting with maternal age were more similar to what was seen in **Models 1A** and **1B**, with some subtle differences. For instance, the effect of parity of one was very small and only significent at the alpha-0.05 level when interacting with any of the age groups. Having parity of two was associated with a 49-gram increase in women aged 25-29 [95% CI 96.9, 203.1, p < 0.001], a 37-gram increase in women aged 30-34 [95% CI 144.3, 252.8, p < 0.001], and a 54-gram increase in women aged 35 or older [95% CI 170.8, 294.1, p < 0.001].
+
+
+# tests
+
+```{r}
+
+# see interaction plot code
+
+```
+
+
+
+### Analysis for Objective 3
+3.	Create growth curves as a function of gestational age, stratified by infant sex; describe this curve using quantiles (0.10, 0.25, 0.50, 0.75, 0.90). 
+
+```{r}
+
+
+lm_3_s <- lm(birth_weight ~ ns(gestational_age_c, 
+                             df = 4) + sex*parity*bmomage_c + 
+             race_eth + mom_weight_previous + mom_ht_feet, data = growth_r)
+summary(lm_3_s)
+extractAIC(lm_3_s)
+
+plot(birth_weight ~ gestational_age_c, data = growth_r, pch = 16, main = "Plot") 
+abline(rq(birth_weight ~ poly(gestational_age_c, 3)*sex, data = growth_r), col = "blue", lty = 2)
+summary(rq(birth_weight ~ poly(gestational_age_c, 3)*sex, data = growth_r))
+
+
+ggplot(growth_r, aes(gestational_age_c, birth_weight)) +
+  geom_point(size=1, colour="grey70") +
+  geom_quantile(quantiles=cuts, formula = y ~ poly(x, 3), colour="red") +
+  geom_smooth(method='lm', formula=y ~ poly(x,3), colour="blue", 
+              se=FALSE, linetype="11") +
+  theme_classic()
+
+### spline
+cubic_spline = rq(birth_weight ~ bs(gestational_age_c, knots = cuts) + sex + 
+                    parity + bmomage_c + race_eth + mom_wt_tx + 
+                    mom_ht_feet, data = growth_r)
+summary(cubic_spline)
+extractAIC(cubic_spline)
+cubic_spline = rq(birth_weight ~ bs(gestational_age_c, knots = cuts), data = growth_r)
+growth_r_2 = mutate(growth_r, smooth = fitted(cubic_spline))
+
+growth_r_2 = mutate(growth_r[which(growth_r$sex == "female"), ], smooth = fitted(cubic_spline))
+growth_r_3 = mutate(growth_r[which(growth_r$sex == "male"), ], smooth = fitted(cubic_spline))
+male <- predict(cubic_spline, growth_r[which(growth_r$sex == "male"), ])
+female <- predict(cubic_spline, growth_r[which(growth_r$sex == "female"), ])
+test <- cbind(male, growth_r[which(growth_r$sex == "male"), ])
+test_2 <- cbind(female, growth_r[which(growth_r$sex == "female"), ])
+head(test)
+summary(male[1:20153])
+
+ggplot(growth_r, aes(gestational_age_c, birth_weight)) + 
+  labs(x = "Experience in year", y = "Weekly wage")+
+  #geom_point(col = "slategrey", alpha = 0.25) +
+  geom_point(data = test, col = "red", alpha = 0.15) +
+  geom_point(data = test_2, col = "blue", alpha = 0.15) +
+  geom_line(data = test, aes(gestational_age_c, male), col = "red") + 
+  geom_line(data = test_2, aes(gestational_age_c, female), col = "blue") +
+  ggtitle("Cubic regression spline model")
+  
+
+growth_r_2 = mutate(growth_r, smooth = fitted(cubic_spline))
+ggplot(growth_r_2, aes(gestational_age_c, birth_weight)) + 
+  labs(x = "Experience in year", y = "Weekly wage")+
+  geom_point(col = "slategrey", alpha = 0.25) +
+  geom_line(aes(gestational_age_c, smooth), col = "red") + 
+  ggtitle("Cubic regression spline model")
+
+summary(cubic_spline)
+table(growth$bpreterm  == "preterm")
+aggregate(growth$gestational_age, by = list(growth$bpreterm), FUN = mean)
+
+table(growth$bpreterm, growth$parity)
+
+table(growth$bpreterm, growth$gestational_age)
+
+
+
+
+quantiles <- rq(birth_weight ~ ps(gestational_age_c) + sex + parity + 
+                  bmomage_c + race_eth + mom_wt_tx + mom_ht_feet, 
+                  data = growth_r, tau = c(0.1, 0.25, 0.5, 0.75, 0.9))
+summary(quantiles)
+
+# key is, logical approach to choosing complexity for splines
+# - cv; pick as many degres of freedom as you look like you need
+
+AIC(quantiles)
+names(growth_r)
+growth$bpreterm <- ifelse(is.na(growth$bpreterm), "not preterm", "preterm")
+growth$bpreterm <- relevel(as.factor(growth$bpreterm), ref = "not preterm")
+
+table(growth_r$parity_cat,
+      growth_r$bpreterm)
+
+growth_r$parity_pt <- paste0(growth_r$parity_cat, ", ", ifelse(growth_r$bpreterm == "not preterm",
+                                                               "not pt", "pt"))
+
+growth_r$pt_birth <- ifelse(growth$bpreterm == "preterm", "pt", "not pt")
+growth_r$pt_birth <- as.factor(growth_r$pt_birth)
+
+
+
+# simple linear model
+quantiles_lin <- gcrq(birth_weight ~ gestational_age_c, 
+                      data = growth_r, tau = c(0.1, 0.25, 0.5, 0.75, 0.9))
+AIC(quantiles_lin) # 1539944
+# linear quantile regression is clearly limited; variation at the tau values seems to capture the range of variation in the data
+par(mfrow = c(1, 2))
+plot(growth_r$gestational_age_c, growth_r$birth_weight)
+plot(quantiles_lin, add = TRUE)
+plot(quantiles_lin, term = "gestational_age_c",
+     axis.tau = TRUE, conf.level = .95, col = 2)
+
+# splines with rq function
+quantiles <- rq(birth_weight ~ bs(gestational_age_c, df = 4) + sex + parity_cat +
+                  bmomage_c + race_eth + pt_birth + mom_wt_tx + mom_ht_feet, 
+                  data = growth_r, tau = c(0.1, 0.25, 0.5, 0.75, 0.9),
+                alpha = 0.05)
+AIC(quantiles) 
+# 591660.9 580789.5 577509.9 584320.2 597433.3  ns()
+# 591612.1 580725.4 577418.2 584204.9 597379.6  bs()
+# 591628.3 580732.3 577425.1 584211.0 597383.5  poly()
+# AIC is lowest on average for b-splines
+
+plot(growth_r$gestational_age_c, growth_r$birth_weight)
+lines(quantiles$x, quantiles$y, add = TRUE)
+length(quantiles$y)
+summary(quantiles)
+res_quantiles <- as.data.frame(t(quantiles$coefficients)) |>
+  select(2:5)
+res_quantiles <- res_quantiles |>
+  mutate(tau = row.names(res_quantiles)) |>
+  mutate(tau = str_sub(tau, start = 5, end = nchar(tau))) |>
+  pivot_longer(cols = -c("tau"))
+
+ggplot(res_quantiles, aes(x = tau, y = value, group = name, colour = name)) +
+  geom_line(lwd = 1) +
+  #ylim(c(0, 5500)) +
+  theme_minimal()
+# note the extrapolation beyond the range of the data (for spline 1, quantiles 1:3)
+
+# let's try penalized b-splines
+quantiles_gc <- gcrq(birth_weight ~ ps(gest_age,
+                                       K = 2, d = 3,
+                                       deg = 3,
+                                       ndx = 2) + sex + parity_cat +
+                  bmomage_c + race_eth + pt_birth + mom_weight_previous_c + mom_ht_feet, 
+                  data = growth_r, tau = c(0.1, 0.25, 0.5, 0.75, 0.9))
+AIC(quantiles_gc) # 1501932
+res_quantiles_gc <- as.data.frame(round(quantiles_gc$coefficients, 2))
+res_quantiles_gc$var <- row.names(res_quantiles_gc)
+plot(quantiles_gc, res = TRUE, term=1, col = -1, conf.level = 0.95)
+
+## stratified by sex:
+f_sex <- growth_r$sex
+quantiles_gc_sex <- gcrq(birth_weight ~ f_sex + ps(gest_age, by = f_sex, # curves by sex
+                                                   K = 2, d = 3, # difference order of the penalty
+                                                   deg = 3, # degree of the spline polynomial
+                                                   ndx = 2) + # number of intervals of the covariate range
+                                                            # basis: ndx+deg
+                           parity_cat + bmomage_c + race_eth + pt_birth + 
+                           mom_weight_previous_c + mom_ht_feet, 
+                         data = growth_r, 
+                         tau = c(0.1, 0.25, 0.5, 0.75, 0.9))
+AIC(quantiles_gc_sex) # 1501961
+res_quantiles_gc_sex <- as.data.frame(round(quantiles_gc_sex$coefficients, 2))
+res_quantiles_gc_sex$var <- row.names(res_quantiles_gc_sex)
+
+plot(quantiles_gc_sex, res = TRUE, col = -1, term = 1, conf.level = 0.95)
+quantiles_gc_sex$coefficients
+
+plot.gcrq(quantiles_gc_sex)
+
+## sex interaction
+quantiles_lin <- gcrq(birth_weight ~ gestational_age_c + sex +
+                        ps(parity,
+                                       K = 2, d = 3,
+                                       deg = 3,
+                                       ndx = 2) + bmomage_c + race_eth + pt_birth + 
+                        mom_wt_tx + mom_ht_feet, 
+                      data = growth_r, 
+                      tau = c(0.1, 0.25, 0.5, 0.75, 0.9))
+AIC(quantiles_lin) # 1502249
+res_quantiles_lin <- as.data.frame(round(quantiles_lin$coefficients, 2))
+res_quantiles_lin$var <- row.names(res_quantiles_lin)
+
+plot(quantiles_lin, res = TRUE, col = -1, term=1, conf.level = 0.95)
+
+
+
+
+
+
+taus<-c(.1,.25,.50,.75,.9)
+ggplot(growth_r, aes(x = gestational_age_c, y = birth_weight)) + 
+  geom_point(alpha = 0.25) +
+  stat_quantile(aes(color="10th"),geom="smooth",method="rq",quantiles=0.1,
+                formula=y~ splines::ns(x,df=4)) +  # 2 degrees of freedom beyond linear, 2 knot points
+  stat_quantile(aes(color="25th"),geom="smooth",method="rq",quantiles=0.25,
+                formula=y~ splines::ns(x,df=4)) + # 2 degrees of freedom beyond linear, 2 knot points
+  stat_quantile(aes(color="50th"),geom="smooth",method="rq",quantiles=0.50,
+                formula=y~ splines::ns(x,df=4)) + # 2 degrees of freedom beyond linear, 2 knot points
+  stat_quantile(aes(color="75th"),geom="smooth",method="rq",quantiles=0.75,
+                formula=y~ splines::ns(x,df=4)) + # 2 degrees of freedom beyond linear, 2 knot points
+  stat_quantile(aes(color="90th"),geom="smooth",method="rq",quantiles=0.9,
+                formula=y~ splines::ns(x,df=4)) +
+  guides(color = guide_legend(title = "Percentile"))
+  #labs(x="GDP Per Capita",y="Life Expectancy (Yrs)",caption="5th, 25th, 50th, 75th, and 95th percentiles")
+  #stat_quantile(geom = "smooth", method = "rq", 
+  #              quantiles = taus,
+  #              formula = y ~ splines::ns(x, df=4))
+
+
+
+# Plot 
+plot(birth_weight ~ gestational_age_c, data = growth_r, pch = 16, main = "Plot") 
+abline(lm(birth_weight ~ gestational_age_c, data = growth_r), col = "red", lty = 2) 
+abline(rq(birth_weight ~ gestational_age_c, data = growth_r), col = "blue", lty = 2)
+
+
+plot(lm_3_s, which = 2)
+lm_3_s$coefficients
+fit <- cbind(str(lm_3_s$fitted.values),
+             lm_3_s$model$`ns(gestational_age_c, df = 4)`)
+fit <- data.frame(fit)
+plot(fit$X1, fit$X4)
+
+
+ggplot(growth_r, aes(x = gestational_age_c, y = birth_weight)) + 
+  geom_point() +
+  labs(x = "Gestation", y = "Birth weight") +
+  stat_quantile(aes(color = "L2 Regression"), geom = "smooth", method = "rq", 
+                quantiles = c(0.10, 0.25, 0.50, 0.75, 0.90),
+                formula = y ~ splines::ns(x,df=3))
+  stat_smooth(aes(color = "LS Regression"), geom = "smooth", method = "lm", se = FALSE,
+              formula = y ~ splines::ns(x, df = 4))
+
+
+
+
+lm_3 <- lm(birth_weight ~ ns(gestational_age_c, 
+                             knots = cuts) + sex*parity*bmomage_c_sc + 
+             race_eth + mom_wt_tx + mom_ht_feet, data = growth_r)
+summary(lm_3)
+
+ggplot(data = growth_r, aes(y = birth_weight, x = gestational_age_c)) +
+  geom_point(alpha = 0.25) +
+  theme_minimal() +
+  stat_smooth(method = lm, formula = birth_weight ~ ns(gestational_age_c, knots = cuts) + 
+    sex * parity * bmomage_c_sc + race_eth + mom_wt_tx + mom_ht_feet, se = FALSE)
+  geom_abline(slope = lm_1a$coefficients[["parity"]], 
+              intercept = lm_1a$coefficients[["(Intercept)"]], color = "red") +
+  geom_abline(slope = lm_1b$coefficients[["parity"]], 
+              intercept = lm_1b$coefficients[["(Intercept)"]], color = "blue")
+  labs(y = "Birth weight (g)", x = "Gestational age")
+
+lm_3$call
+
+ggplot(countries,aes(x=gdpPercap,y=lifeExp))+geom_point()+
+  labs(x="GDP Per Capita",y="Life Expectancy (Yrs)") +
+  stat_smooth(aes(color="LS Regression"),geom="smooth",method="lm",se=FALSE,
+              formula=y~ splines::ns(x,df=3))
+
+agelims <- range(growth_r$gestational_age_c)
+#Generating Test Data
+age.grid <- seq(from = agelims[1], to = agelims[2])
+
+predict(lm_3, gestational_age_c = age.grid)
+length(predict(lm_3, gestational_age_c = age.grid))
+
+predict(lm_3, list(age.grid))
+
+age.grid
+length(predict(lm_3, gestational_age_c = age.grid))
+
+
+lm_3_s <- lm(birth_weight ~ ns(gestational_age_c, 
+                               knots = cuts), data = growth_r)
+
+extractAIC(lm(birth_weight ~ ns(gestational_age_c, 
+                               knots = cuts), data = growth_r))
+extractAIC(lm(birth_weight ~ ns(gestational_age_c, 
+                               df = 8), data = growth_r))
+lm_3_s <- lm(birth_weight ~ ns(gestational_age_c, 
+                               df = 8), data = growth_r)
+
+summary(lm_3_s)
+#inv2lims<-range(clothingSinv2)
+#inv2.grid<-seq(from=inv2lims [1],to=inv2lims [2])
+pred <- predict(lm_3_s, newdata = list(gestational_age_c = age.grid), se = T)
+
+plot(growth_r$gestational_age_c, growth_r$birth_weight, col = "grey",
+     xlab ="gestational_age_c", ylab="birth_weight")
+lines(age.grid, pred$fit, col = 'red', lwd = 3)
+
+
+lines(age.grid, lm_3_s$fitted.values, col='red', lwd=3)
+lines(age.grid, predict(lm_3_s))
+
+predict(lm_3_s, gestational_age_c = age.grid[1])
+
+abline(v = cuts,lty=2,col="darkgreen")
+#lines(lm_3, col="red", lwd=2)
+points(age.grid, predict(lm_3, gestational_age_c = age.grid), col="darkgreen", lwd=2, type="l")
+#adding cutpoints
+abline(v = cuts, lty=2, col="darkgreen")
+
+```
+
+
+
+
+

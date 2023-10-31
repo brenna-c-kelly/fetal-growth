@@ -1,0 +1,160 @@
+---
+title: "Untitled"
+author: "Brenna Kelly"
+date: "2023-10-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Equal Variance
+# Testing for heteroskedasticity in relationships between predictors and outcome
+
+```{r}
+
+bptest(growth_r$birth_weight ~ growth_r$parity) # reject H0: the variance is nonconstant
+bptest(growth_r$birth_weight ~ growth_r$parity_cat) # reject H0 for categorical variable as well
+bptest(growth_r$birth_weight ~ growth_r$gestational_age) # don't reject H0
+
+# takeaway: we'll use quantile regression to capture nonconstant variance 
+
+```
+
+## Linearity
+Cross-validation for number of knots
+
+```{r}
+## Choosing number of knots
+## cv approach: glm
+set.seed(30)
+cv.error.10 <- rep(0, 10)
+
+# gestational age
+for(i in 1:10) {
+  glm.fit <- glm(birth_weight ~ ns(gestational_age, i), data = growth_r)
+  cv.error.10[i] <- cv.glm(growth_r, glm.fit, K = 10)$delta[1]
+}
+cv <- data.frame(rep(1:10), cv.error.10)
+plot(cv) # not much improvement beyond 4 df
+
+# no visible difference between 4 and 5 df; use 4
+ggplot(growth_r, aes(x = birth_weight, y = gestational_age)) +
+  geom_point(alpha = 0.1, color="black") + 
+  theme_minimal() +
+  stat_smooth(method = "lm", 
+               formula = y ~ ns(x, df = 4), 
+               lty = 1, col = "red") +
+  stat_smooth(method = "lm", 
+               formula = y ~ ns(x, df = 5), 
+               lty = 1, col = "cyan4")
+
+## parity
+# splines for parity are leading to some strange results
+set.seed(30)
+cv.error.10 <- data.frame(rep(0, 10),
+                          rep(0, 10),
+                          rep(0, 10))
+names(cv.error.10) <- c("poly", "bs", "ns")
+
+for(i in 1:10) {
+  glm.fit <- glm(birth_weight ~ poly(parity, i), data = growth_r)
+  cv.error.10$poly <- cv.glm(growth_r, glm.fit, K = 10)$delta[1]
+  glm.fit <- glm(birth_weight ~ bs(parity, i), data = growth_r)
+  cv.error.10$bs <- ifelse(i < 3, NA, cv.glm(growth_r, glm.fit, K = 10)$delta[1])
+  glm.fit <- glm(birth_weight ~ ns(parity, i), data = growth_r)
+  cv.error.10$ns <- cv.glm(growth_r, glm.fit, K = 10)$delta[1]
+}
+cv_p <- data.frame(rep(1:10), cv.error.10)
+
+# regardless of fitting procedure for the cubic splines, there seems to be no improvement when increasing knots, suggesting no difference between linearity and splines
+par(mfrow = c(2, 2))
+plot(cv_p$rep.1.10., cv_p$poly, col = "darkgoldenrod1", main = "poly")
+plot(cv_p$rep.1.10., cv_p$bs, col = "darkorchid3", main = "bs")
+plot(cv_p$rep.1.10., cv_p$ns, col = "firebrick1", main = "ns")
+dev.off()
+```
+
+**Testing basis (bs, ns, poly) and number of knots: ** Gestational age
+
+```{r, animation.hook="gifski", delay = 0.25, warning=FALSE}
+# gestational age: comparing bs(), ns(), and poly()
+for(i in 1:10) {
+  x <- ggplot(growth_r, aes(y = birth_weight, x = gestational_age)) +
+    geom_point(alpha = 0.1, color = "black") + 
+    theme_minimal() +
+    stat_smooth(method = "lm", 
+              formula = y ~ poly(x, df = i), 
+              lty = 1, col = "darkgoldenrod1") + # odd behavior at the tails
+  stat_smooth(method = "lm", 
+              formula = y ~ bs(x, df = i), 
+              lty = 1, col = "darkorchid3") + # extrapolates, but otherwise similar to ns()
+    stat_smooth(method = "lm", 
+                formula = y ~ ns(x, df = i), 
+                lty = 1, col = "firebrick1") + # well-behaved
+    labs(title = paste0("Splines for Gestational Age", " df = ", i),
+         xlab = "Birth weight (g)",
+         ylab = "Gestational age (wk)",
+         caption = "bs() cannot take df < 3 and begins at 3")
+  print(x)
+}
+```
+
+**Testing basis (bs, ns, poly) and number of knots: ** Parity
+
+```{r, animation.hook="gifski", delay = 0.25, warning=FALSE}
+for(i in 1:10) {
+  y <- ggplot(growth_r, aes(y = birth_weight, x = parity)) +
+    geom_point(alpha = 0.1, color = "black") + 
+    theme_minimal() +
+    stat_smooth(method = "lm", 
+              formula = y ~ poly(x, df = i), 
+              lty = 1, col = "darkgoldenrod1") + # odd behavior at the tails
+  stat_smooth(method = "lm", 
+              formula = y ~ bs(x, df = i), 
+              lty = 1, col = "darkorchid3") + # extrapolates, but otherwise similar to ns()
+    stat_smooth(method = "lm", 
+                formula = y ~ ns(x, df = i), 
+                lty = 1, col = "firebrick1") + # well-behaved
+    labs(title = paste0("Splines for Parity", " df = ", i),
+         xlab = "Birth weight (g)",
+         ylab = "Gestational age (wk)",
+         caption = "bs() cannot take df < 3 and begins at 3")
+  print(y)
+}
+
+```
+
+```{r}
+
+## for fun: let's try a different approach to cv: smooth.spline()
+# *overfitting likely*
+
+# parity
+sspline_gcv <- smooth.spline(growth_r$parity,
+                         growth_r$birth_weight,  
+                         cv = FALSE) # 13.5 knots
+sspline_loo <- smooth.spline(growth_r$parity,
+                         growth_r$birth_weight,  
+                         cv = TRUE) # 2 knots
+plot(growth_r$parity, growth_r$birth_weight)
+lines(sspline_gcv, col = "blue")
+lines(sspline_loo, col = "red")
+# parity should likely be linear
+
+# gestational age
+sspline_gcv <- smooth.spline(growth_r$gestational_age, 
+                             growth_r$birth_weight, 
+                             cv = FALSE) #  7.9 knots; overkill
+sspline_loo <- smooth.spline(growth_r$gestational_age, 
+                             growth_r$birth_weight, 
+                             cv = TRUE) # 19 knots; serious overkill
+plot(growth_r$gestational_age, growth_r$birth_weight)
+lines(sspline_gcv, col = "blue")
+lines(sspline_loo, col = "red")
+# gestational age will require a spline, but not this many knots
+
+```
+
+# Next step: analysis

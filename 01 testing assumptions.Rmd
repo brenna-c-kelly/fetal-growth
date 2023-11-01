@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "01 testing assumptions"
 author: "Brenna Kelly"
 date: "2023-10-31"
 output: html_document
@@ -9,8 +9,26 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r results='hide', message=FALSE, warning=FALSE}
+library(boot)
+library(purrr)
+library(dplyr)
+library(caret)
+library(tidyr)
+library(lmtest)
+library(gifski)
+library(moments)
+library(ggplot2)
+library(splines)
+library(tableone)
+library(gridExtra)
+
+growth_r <- read.csv("growth_r.csv")
+```
+
 ## Equal Variance
-# Testing for heteroskedasticity in relationships between predictors and outcome
+
+**Testing for heteroskedasticity** in relationships between predictors and outcome:
 
 ```{r}
 
@@ -23,9 +41,9 @@ bptest(growth_r$birth_weight ~ growth_r$gestational_age) # don't reject H0
 ```
 
 ## Linearity
-Cross-validation for number of knots
+Cross-validation for number of knots:
 
-```{r}
+```{r, warning=FALSE}
 ## Choosing number of knots
 ## cv approach: glm
 set.seed(30)
@@ -127,7 +145,6 @@ for(i in 1:10) {
 ```
 
 ```{r}
-
 ## for fun: let's try a different approach to cv: smooth.spline()
 # *overfitting likely*
 
@@ -157,4 +174,4 @@ lines(sspline_loo, col = "red")
 
 ```
 
-# Next step: analysis
+### Next step: analysis

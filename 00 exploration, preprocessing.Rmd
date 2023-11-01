@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+```{r results='hide', message=FALSE, warning=FALSE}
 library(boot)
 library(purrr)
 library(dplyr)
@@ -23,9 +23,9 @@ library(splines)
 library(tableone)
 library(gridExtra)
 ```
-### Data Exploration and Preprocessing
+# Data Exploration and Preprocessing
 
-# Summarizing variables, generating Table 1
+### Summarizing variables, generating Table 1
 
 ```{r}
 
@@ -57,10 +57,11 @@ tab2 <- CreateTableOne(vars = c("birth_weight", "parity", "bmomage",
              data = growth, strata = "t1_strata")
 
 print(tab2, showAllLevels = TRUE)
+write.csv(print(tab2, showAllLevels = TRUE), "table_1.1.csv", row.names = TRUE)
 
 ```
 
-# Skewness tests and potential remedies
+### Skewness tests and potential remedies
 
 ```{r, warning = FALSE, message = FALSE}
 
@@ -121,7 +122,7 @@ prop.table(table(growth$race_eth_simple))
 
 ```
 
-# Imputation
+### Imputation
 Without imputation, we would be performing complete-case analysis, which is subject to bias. A full analysis may include a sensitivity analysis for imputation methods, but for our purposes, we'll just do some basic imputations. **Note:** we aren't performing imputation on our predictor variables or outcome variable.
 
 ```{r}
@@ -153,7 +154,7 @@ growth$bmomage <- ifelse(is.na(growth$bmomage), mean(growth$bmomage, na.rm = TRU
 
 ```
 
-# Transformations for interpretability
+### Transformations for interpretability
 Centering, scaling, and setting referent categories.
 
 ```{r}
@@ -173,8 +174,10 @@ growth <- growth |>
   mutate(parity_f = relevel(as.factor(parity), ref = "0")) |> # logical referent
   mutate(sex = relevel(as.factor(ifelse(dfemale == 1, "female", "male")), ref = "male")) |> # larger group
   mutate(race_eth = relevel(as.factor(race_eth), ref = "White")) |> # largest group
-  mutate(race_eth_simple = relevel(as.factor(race_eth_simple), ref = "White")) # largest group
-
+  mutate(race_eth_simple = relevel(as.factor(race_eth_simple), ref = "White")) |> # largest group
+  mutate(bpreterm = as.factor(ifelse(is.na(bpreterm), "not preterm", "preterm"))) |>
+  mutate(bpreterm = relevel(bpreterm, ref = "not preterm"))
+  
 # dataset for regression
 growth_r <- growth |>
   select(-c(race, id, mom_height_inches, mom_wt_tx,
@@ -185,5 +188,7 @@ growth_r <- growth |>
 summary(growth_r) # no missing values
 names(growth)
 
+#write.csv(growth_r, "growth_r.csv", row.names = FALSE)
+
 ```
-# next step: testing assumptions
+### next step: testing assumptions
